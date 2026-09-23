@@ -1,4 +1,4 @@
-﻿# ROV / Submarino de tesis
+# ROV / Submarino de tesis
 
 Repositorio de trabajo para el ROV de tesis: firmware del ESP32-S3, aplicación de superficie y documentación técnica.
 
@@ -9,7 +9,7 @@ Repositorio de trabajo para el ROV de tesis: firmware del ESP32-S3, aplicación 
 - `interface`: aplicación Python de superficie (HUD) y diagnóstico del mando.
 - `hardware`: BOM, Gerbers, mapa de pines y referencias de PCB.
 - `data`: muestras ligeras de telemetría; las grabaciones no se versionan.
-- `docs`: protocolo, procedimiento de pruebas y notas técnicas.
+- `docs`: protocolo, procedimiento de pruebas y notas técnicas.`n- `docs/evidencia`: fotos históricas de la primera versión construida, evidencia de PCB y enlace a pruebas FEA.
 
 ## Inicio rápido
 
@@ -19,3 +19,4 @@ Repositorio de trabajo para el ROV de tesis: firmware del ESP32-S3, aplicación 
 4. Para la interfaz, instale las dependencias de `interface/requirements.txt` y ajuste `PUERTO_COM` y la cámara en `hud_superficie.py`.
 
 Antes de hacer una prueba con motores, mantenga el vehículo asegurado y ejecute primero `stop`.
+
