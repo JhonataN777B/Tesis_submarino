@@ -4,7 +4,7 @@
 
 Las fotos de [`primera_version_submarino`](primera_version_submarino/) provienen de `Proyecto/Imagenes` y documentan el primer submarino que se construyó. Son un registro histórico de esa versión; no representan el diseño actual.
 
-## Pruebas de PCB
+## Diseño de la versión 2`n`nLas imágenes en [`version_2_submarino`](version_2_submarino/) son renders del diseño de la segunda versión, provenientes de `Proyecto/imagenes v2`. Se presentan como visualizaciones del diseño, no como fotografías de una unidad construida.`n`n## Pruebas de PCB
 
 En [`pcb`](pcb/) se incluyen `DATOS.jpeg` y `Montaje.jpeg`, copiados desde `Proyecto/pruebas PCB`. El video original está en la carpeta fuente; los archivos `.mp4` se excluyen del control de versiones por la regla del repositorio.
 
@@ -19,3 +19,4 @@ Las pruebas FEA y sus imágenes están en el documento compartido por el usuario
 - Los modelos CAD de Inventor y el modelo Blender permanecen en la carpeta fuente `Proyecto`.
 
 Las recomendaciones de normas APA del tutor no se incorporan a este repositorio.
+
