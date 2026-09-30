@@ -1,23 +1,31 @@
-# ROV / Submarino de tesis
+# ROV / Submarine thesis
 
-Repositorio de trabajo para el ROV de tesis: firmware del ESP32-S3, aplicación de superficie y documentación técnica.
+Repository for the low-cost remotely operated vehicle (ROV): ESP32-S3 firmware, surface-control interface, hardware exports, telemetry examples, and validation evidence.
 
-## Estructura
+## Repository layout
 
-- `firmware/tests`: sketches independientes para validar sensores y actuadores.
-- `firmware/integrated`: firmware principal `Control_Submarino_Unificado.ino`.
-- `interface`: HUD, diagnóstico del mando y scripts de control de superficie (ver `interface/README.md`).
-- `hardware`: BOM, Gerbers, mapa de pines y referencias de PCB.
-- `data`: muestras ligeras de telemetría; las grabaciones no se versionan.
-- `docs`: protocolo, procedimiento de pruebas y notas técnicas.
-- `docs/evidencia`: fotos históricas de la primera versión construida, renders de la versión 2, evidencia de PCB y enlace a pruebas FEA.
+- firmware/integrated: current ESP32-S3 integrated firmware.
+- firmware/tests: independent Arduino sketches for sensor and actuator checks.
+- interface/solo_control.py: current joystick, serial, camera HUD, telemetry, logging, and recording application.
+- interface/prueba_control_mando.py: independent PG-9076/Pygame axis and button diagnostic.
+- hardware: PCB files and STL models used for the printed assembly.
+- data: a lightweight, illustrative telemetry sample. Runtime logs are not committed.
+- docs/evidencia: PCB, design, and selected operational evidence videos.
 
-## Inicio rápido
+## Current integration
 
-1. Abra `firmware/integrated/Control_Submarino_Unificado.ino` en Arduino IDE.
-2. Seleccione la placa ESP32-S3 y configure el puerto correcto.
-3. Instale las librerías indicadas en el encabezado del sketch.
-4. Para la interfaz, instale las dependencias de `interface/requirements.txt`; ajuste `PUERTO_COM` y la cámara según corresponda.
-5. Para los scripts de control del mando, consulte `interface/README.md` y configure el puerto COM en `solo_control.py`.
+The firmware streams telemetry at 10 Hz over 115200-baud serial and accepts text commands on the same port. It reads the ACS712, battery divider, MS5837 pressure sensor, and BNO055/SEN0374 orientation sensor when available. Missing sensor values are printed as --. The Python interface accepts current 24-field rows and legacy 20-field rows.
 
-Antes de hacer una prueba con motores, mantenga el vehículo asegurado y ejecute primero `stop`.
+The BNO055 is configured for NDOF fusion. The Python HUD shows heading (yaw), pitch, and roll, and logs telemetry; the current software does not implement automatic attitude or depth stabilization.
+
+The Python controller defaults to COM3 and camera index 1. Adjust those settings in interface/solo_control.py for the computer in use. Close Arduino Serial Monitor before starting the Python app because both need the same COM port.
+
+## Setup
+
+1. Open firmware/integrated/Control_Submarino_Unificado.ino in Arduino IDE.
+2. Install ESP32Servo, Adafruit NeoPixel, a compatible MS5837 library, and DFRobot_BNO055.
+3. Install Python dependencies from interface/requirements.txt.
+4. Set the correct serial port and camera index in interface/solo_control.py.
+5. Review docs/protocolo_serial.md and docs/pruebas.md before an integrated test.
+
+Keep the vehicle restrained and verify stop/neutral before testing propulsion.

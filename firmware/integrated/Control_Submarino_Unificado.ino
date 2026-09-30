@@ -2,11 +2,11 @@
   Control unificado para ESP32-S3
   Control por Monitor Serial a 115200 baudios, fin de linea: Nueva linea.
 
-  Librerias necesarias (Administrador de bibliotecas Arduino):
+  Librerias necesarias:
   - ESP32Servo
   - Adafruit NeoPixel
   - MS5837 (Blue Robotics / Rob Tillaart compatible con MS5837.h)
-  - IMU MPU6500/MPU9250 por I2C directo (sin libreria MPU)
+  - DFRobot_BNO055 (biblioteca oficial para SEN0374; se instala desde el ZIP de GitHub)
 */
 
 #include <Wire.h>
@@ -15,12 +15,20 @@
 #include <Adafruit_NeoPixel.h>
 #include <Preferences.h>
 #include "MS5837.h"
+#include "DFRobot_BNO055.h"
+
+typedef DFRobot_BNO055_IIC BNO055;
+BNO055 bno055_28(&Wire, 0x28);
+BNO055 bno055_29(&Wire, 0x29);
+BNO055 *sensorBno055 = nullptr;
 
 // ------------------------- Pines asignados -------------------------
 constexpr uint8_t PIN_ACS712 = 1;
 constexpr uint8_t PIN_BATERIA = 10;
 constexpr uint8_t PIN_I2C_SDA = 8;
 constexpr uint8_t PIN_I2C_SCL = 9;
+constexpr uint8_t BNO055_DIRECCION_1 = 0x28;
+constexpr uint8_t BNO055_DIRECCION_2 = 0x29;
 constexpr uint8_t PIN_SERVO_PINZA = 2;
 constexpr uint8_t PIN_ESC = 15;
 constexpr uint8_t PIN_BOMBA_AI = 4;
@@ -38,6 +46,8 @@ constexpr uint8_t NUM_PIXELS = 16;  // Cambie este valor si su aro tiene otra ca
 constexpr bool ESC_USA_TRANSISTOR_NPN = true;
 constexpr bool ESC_REVERSIBLE = true;
 constexpr unsigned long TIEMPO_ARMADO_ESC_MS = 3000;
+// Telemetria a 10 Hz: deja margen para las conversiones de 20 ms del MS5837.
+constexpr unsigned long INTERVALO_TELEMETRIA_MS = 100;
 constexpr int ESC_PULSO_MINIMO = 1000;
 constexpr int ESC_PULSO_NEUTRO = ESC_REVERSIBLE ? 1500 : 1000;
 constexpr int ESC_PULSO_MAXIMO = 2000;
@@ -47,6 +57,8 @@ constexpr uint32_t ESC_PWM_DUTY_MAX = (1UL << ESC_PWM_RESOLUCION) - 1;
 
 // Divisor de bateria: 30 kOhm arriba y 10 kOhm abajo.
 constexpr float FACTOR_DIVISOR_BATERIA_PREDETERMINADO = 4.2318f;
+constexpr float VOLTAJE_BATERIA_BAJO_V = 10.5f;
+constexpr unsigned long TIEMPO_CONFIGURACION_LED_MS = 5000;
 // ACS712 (20A) alimentado a 5V con divisor 10k/10k a la salida
 constexpr float FACTOR_DIVISOR_ACS712 = 2.0f;      // Divisor 10k/10k (divide por 2)
 constexpr float ACS712_SENSIBILIDAD_V_A = 0.100f; // 100 mV/A para el modelo ACS712-20B
@@ -61,13 +73,24 @@ Adafruit_NeoPixel pixels(NUM_PIXELS, PIN_NEOPIXEL, NEO_GRB + NEO_KHZ800);
 MS5837 presion;
 Preferences preferencias;
 
-bool mpuDisponible = false;
+bool imuDisponible = false;
 bool magnetometroDisponible = false;
+bool lecturaImuValida = false;
 bool lecturaMagValida = false;
 bool presionDisponible = false;
 bool escPwmDisponible = false;
-uint8_t direccionMpu = 0;
-uint8_t whoAmIMpu = 0;
+bool sistemaOperando = false;
+bool lecturaAcsValida = false;
+bool lecturaBateriaValida = false;
+bool lecturaPresionValida = false;
+float voltajeBateriaActual = 0.0f;
+uint8_t fallosLecturaImu = 0;
+uint8_t fallosLecturaMag = 0;
+uint8_t direccionBno055 = 0;
+uint8_t calibracionSistema = 0;
+uint8_t calibracionGiroscopio = 0;
+uint8_t calibracionAcelerometro = 0;
+uint8_t calibracionMagnetometro = 0;
 float ceroAcsPinV = 1.25f;
 float factorDivisorBateria = FACTOR_DIVISOR_BATERIA_PREDETERMINADO;
 float presionSuperficieMbar = 1013.25f;
@@ -76,9 +99,7 @@ float aceleracionX = 0, aceleracionY = 0, aceleracionZ = 0;
 float giroX = 0, giroY = 0, giroZ = 0;
 float magnetometroX = 0, magnetometroY = 0, magnetometroZ = 0;
 float rollImu = 0, pitchImu = 0, rumboImu = 0;
-float offsetGiroX = 0, offsetGiroY = 0, offsetGiroZ = 0;
-float factorMagX = 1, factorMagY = 1, factorMagZ = 1;
-unsigned long ultimaLecturaMpuMs = 0;
+unsigned long ultimaLecturaImuMs = 0;
 unsigned long ultimaSalidaSensoresMs = 0;
 unsigned long ultimoCeroAcsMs = 0;
 unsigned long escNeutroDesdeMs = 0;
@@ -87,10 +108,10 @@ bool filtroCorrienteInicializado = false;
 uint8_t filasTabla = 0;
 int servoAngulo = 110;
 int escMicrosegundos = ESC_PULSO_NEUTRO;
-bool orientacionInicializada = false;
 
 enum ModoLed { LED_APAGADO, LED_ERROR, LED_CONFIG, LED_LISTO, LED_OPERANDO, LED_BATERIA };
 ModoLed modoLed = LED_APAGADO;
+unsigned long inicioSistemaMs = 0;
 unsigned long ultimoLedMs = 0;
 uint16_t pixelConfiguracion = 0;
 int brilloOperacion = 5;
@@ -102,27 +123,30 @@ void apagarAire();
 void apagarTodo();
 void procesarComando(char *comando);
 void actualizarLeds();
+bool hayFallaSensores();
 void colorTodos(uint8_t r, uint8_t g, uint8_t b);
 void leerSensores();
 void imprimirAyuda();
 float leerVoltajeAdcPromedio(uint8_t pin);
 void calibrarCorriente();
 void calibrarSuperficie();
-void calibrarImu();
-void actualizarMPU();
+void imprimirCalibracionBNO055(const char *mensaje);
+void actualizarBNO055();
 void actualizarCeroCorrienteAutomatico();
 void imprimirEncabezadoTabla();
 void escanearI2C();
 bool hayDispositivoI2C(uint8_t direccion);
-uint8_t leerRegistroI2C(uint8_t direccion, uint8_t registro);
-bool leerRegistrosI2C(uint8_t direccion, uint8_t registro, uint8_t *buffer, uint8_t longitud);
-bool escribirRegistroI2C(uint8_t direccion, uint8_t registro, uint8_t valor);
-void iniciarMPU();
+void iniciarBNO055();
 bool actualizarEsc();
 
 void setup() {
   Serial.begin(115200);
   Serial.setTimeout(50);
+  inicioSistemaMs = millis();
+
+  pixels.begin();
+  pixels.setBrightness(40);
+  colorTodos(255, 120, 0);  // Configuracion visible desde el encendido.
 
   pinMode(PIN_BOMBA_AI, OUTPUT);
   pinMode(PIN_BOMBA_AD, OUTPUT);
@@ -154,15 +178,10 @@ void setup() {
     Serial.printf("PWM ESC: LEDC 50 Hz, pulso %d us, reversible=%s, NPN=%s.\n", escMicrosegundos, ESC_REVERSIBLE ? "si" : "no", ESC_USA_TRANSISTOR_NPN ? "si" : "no");
   }
 
-  pixels.begin();
-  pixels.setBrightness(40);
-  pixels.clear();
-  pixels.show();
-
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setClock(100000);
   escanearI2C();
-  iniciarMPU();
+  iniciarBNO055();
 
   presionDisponible = presion.init();
   if (presionDisponible) {
@@ -170,7 +189,9 @@ void setup() {
     calibrarSuperficie();
   }
   Serial.println("\nControl submarino ESP32-S3 listo.");
-  Serial.printf("IMU: %s | AK8963: %s | MS5837: %s\n", mpuDisponible ? "OK" : "NO detectada", magnetometroDisponible ? "OK" : "NO detectado", presionDisponible ? "OK" : "NO detectado");
+  if (imuDisponible) Serial.printf("BNO055/SEN0374: OK en I2C 0x%02X | Magnetometro integrado: OK\n", direccionBno055);
+  else Serial.println("BNO055/SEN0374: NO detectado en 0x28/0x29 | Magnetometro integrado: NO disponible.");
+  Serial.printf("MS5837: %s\n", presionDisponible ? "OK" : "NO detectado");
   Serial.printf("ESC: espere %lu ms en neutro para el armado.\n", TIEMPO_ARMADO_ESC_MS);
   delay(TIEMPO_ARMADO_ESC_MS);
   calibrarCorriente();  // Cero automático al arrancar con ESC en neutro.
@@ -195,9 +216,9 @@ void loop() {
       linea[longitud++] = c;
     }
   }
-  actualizarMPU();
+  actualizarBNO055();
   actualizarCeroCorrienteAutomatico();
-  if (millis() - ultimaSalidaSensoresMs >= 1000) {
+  if (millis() - ultimaSalidaSensoresMs >= INTERVALO_TELEMETRIA_MS) {
     ultimaSalidaSensoresMs = millis();
     leerSensores();
   }
@@ -210,9 +231,25 @@ void procesarComando(char *comando) {
   if (!strcmp(comando, "conectar") || !strcmp(comando, "ping")) Serial.println("CONTROL_LISTO");
   else if (!strcmp(comando, "ayuda") || !strcmp(comando, "help")) imprimirAyuda();
   else if (!strcmp(comando, "estado") || !strcmp(comando, "sensores")) leerSensores();
+  else if (!strcmp(comando, "reiniciar") || !strcmp(comando, "reinicio") || !strcmp(comando, "reset")) {
+    sistemaOperando = false;
+    apagarTodo();
+    escMicrosegundos = ESC_PULSO_NEUTRO;
+    actualizarEsc();
+    escNeutroDesdeMs = millis();
+    Serial.println("Reinicio solicitado: actuadores apagados y ESC en neutro.");
+    Serial.flush();
+    delay(250);
+    ESP.restart();
+  }
   else if (!strcmp(comando, "calibrar_superficie")) calibrarSuperficie();
-  else if (!strcmp(comando, "calibrar_imu")) { if (mpuDisponible) calibrarImu(); else Serial.println("IMU no disponible."); }
-  else if (!strcmp(comando, "calibrar_brujula")) { if (magnetometroDisponible) Serial.println("Rumbo magnetico disponible, pero sin calibracion de hard/soft iron."); else Serial.println("AK8963 no detectado; sin brujula."); }
+  else if (!strcmp(comando, "calibrar_imu")) { if (imuDisponible) imprimirCalibracionBNO055("Calibracion BNO055 (0=sin calibrar, 3=calibrado):"); else Serial.println("BNO055 no disponible."); }
+  else if (!strcmp(comando, "calibrar_brujula")) {
+    if (magnetometroDisponible) {
+      Serial.println("Mueva el submarino lentamente en varias orientaciones, dibujando ochos, lejos de metales y corrientes del motor.");
+      imprimirCalibracionBNO055("Estado de calibracion BNO055 (0=sin calibrar, 3=calibrado):");
+    } else Serial.println("BNO055/magnetometro integrado no disponible.");
+  }
   else if (!strncmp(comando, "calibrar_bateria ", 17)) {
     float referencia = atof(comando + 17);
     float voltajePin = leerVoltajeAdcPromedio(PIN_BATERIA);
@@ -222,7 +259,12 @@ void procesarComando(char *comando) {
       Serial.printf("Bateria calibrada: referencia %.3f V, ADC %.3f V, factor %.5f (guardado).\n", referencia, voltajePin, factorDivisorBateria);
     } else Serial.println("Uso: calibrar_bateria <voltaje medido con multimetro, 5..25 V>.");
   }
+  else if (!strcmp(comando, "iniciar")) {
+    sistemaOperando = true;
+    Serial.println("Control en modo OPERANDO.");
+  }
   else if (!strcmp(comando, "stop") || !strcmp(comando, "parar")) {
+    sistemaOperando = false;
     apagarTodo();
     escMicrosegundos = ESC_PULSO_NEUTRO;
     actualizarEsc();
@@ -263,16 +305,9 @@ void procesarComando(char *comando) {
       escMicrosegundos = pulso;
       if (!actualizarEsc()) { Serial.println("ERROR: no se pudo actualizar el PWM del ESC."); return; }
       escNeutroDesdeMs = escMicrosegundos == ESC_PULSO_NEUTRO ? millis() : 0;
-      Serial.printf("ESC: %d us.\n", escMicrosegundos);
     }
     else Serial.println("Pulso invalido: use esc 1000..2000.");
-  } else if (!strcmp(comando, "esc_off")) { escMicrosegundos = ESC_PULSO_NEUTRO; actualizarEsc(); escNeutroDesdeMs = millis(); Serial.println("ESC en neutro."); }
-  else if (!strcmp(comando, "led_off")) { modoLed = LED_APAGADO; pixels.clear(); pixels.show(); }
-  else if (!strcmp(comando, "error")) { modoLed = LED_ERROR; Serial.println("LED: error."); }
-  else if (!strcmp(comando, "config")) { modoLed = LED_CONFIG; Serial.println("LED: configurando."); }
-  else if (!strcmp(comando, "listo")) { modoLed = LED_LISTO; colorTodos(0, 120, 255); }
-  else if (!strcmp(comando, "operando")) { modoLed = LED_OPERANDO; Serial.println("LED: operando."); }
-  else if (!strcmp(comando, "bateria")) { modoLed = LED_BATERIA; colorTodos(255, 80, 0); }
+  } else if (!strcmp(comando, "esc_off")) { escMicrosegundos = ESC_PULSO_NEUTRO; actualizarEsc(); escNeutroDesdeMs = millis(); }
   else Serial.println("Comando no valido. Escriba ayuda.");
 }
 
@@ -317,29 +352,6 @@ bool hayDispositivoI2C(uint8_t direccion) {
   return Wire.endTransmission() == 0;
 }
 
-uint8_t leerRegistroI2C(uint8_t direccion, uint8_t registro) {
-  uint8_t dato = 0xFF;
-  leerRegistrosI2C(direccion, registro, &dato, 1);
-  return dato;
-}
-
-bool leerRegistrosI2C(uint8_t direccion, uint8_t registro, uint8_t *buffer, uint8_t longitud) {
-  Wire.beginTransmission(direccion);
-  Wire.write(registro);
-  if (Wire.endTransmission(false) != 0) return false;
-  uint8_t recibidos = Wire.requestFrom(static_cast<int>(direccion), static_cast<int>(longitud));
-  if (recibidos != longitud) { while (Wire.available()) Wire.read(); return false; }
-  for (uint8_t i = 0; i < longitud; ++i) buffer[i] = Wire.read();
-  return true;
-}
-
-bool escribirRegistroI2C(uint8_t direccion, uint8_t registro, uint8_t valor) {
-  Wire.beginTransmission(direccion);
-  Wire.write(registro);
-  Wire.write(valor);
-  return Wire.endTransmission() == 0;
-}
-
 void escanearI2C() {
   Serial.printf("I2C: SDA GPIO %u, SCL GPIO %u. Direcciones detectadas:", PIN_I2C_SDA, PIN_I2C_SCL);
   bool encontrado = false;
@@ -350,101 +362,102 @@ void escanearI2C() {
   Serial.println();
 }
 
-void iniciarMPU() {
-  const uint8_t direcciones[] = {0x68, 0x69};
-  for (uint8_t direccion : direcciones) {
+void iniciarBNO055() {
+  const uint8_t direcciones[] = {BNO055_DIRECCION_1, BNO055_DIRECCION_2};
+  BNO055 *candidatos[] = {&bno055_28, &bno055_29};
+  for (uint8_t i = 0; i < 2; ++i) {
+    uint8_t direccion = direcciones[i];
     if (!hayDispositivoI2C(direccion)) continue;
-    uint8_t id = leerRegistroI2C(direccion, 0x75);
-    Serial.printf("IMU en 0x%02X, WHO_AM_I=0x%02X. ", direccion, id);
-    if (id != 0x70 && id != 0x71 && id != 0x73) { Serial.println("Identificador no reconocido."); continue; }
-    direccionMpu = direccion;
-    whoAmIMpu = id;
-    if (!escribirRegistroI2C(direccionMpu, 0x6B, 0x00)) { Serial.println("No se pudo despertar la IMU."); continue; }
-    delay(50);
-    escribirRegistroI2C(direccionMpu, 0x1A, 0x03);
-    escribirRegistroI2C(direccionMpu, 0x1C, 0x10);  // +/-8 g
-    escribirRegistroI2C(direccionMpu, 0x1B, 0x08);  // +/-500 grados/s
-    escribirRegistroI2C(direccionMpu, 0x37, 0x02);  // Bypass para probar AK8963
-    delay(50);
-    mpuDisponible = true;
-    Serial.printf("IMU lista por I2C directo: %s (accel+gyro).\n", id == 0x70 ? "MPU6500" : (id == 0x71 ? "MPU9250" : "MPU9255"));
-
-    // Seguir la inicializacion del sketch funcional del usuario: en algunos
-    // clones el WIA no es estandar aunque el magnetometro responda en 0x0C.
-    uint8_t idMag = leerRegistroI2C(0x0C, 0x00);
-    bool respondeMag = hayDispositivoI2C(0x0C);
-    if (respondeMag && escribirRegistroI2C(0x0C, 0x0A, 0x16)) {
-      delay(50);  // Continuo 100 Hz, salida de 16 bits.
-      magnetometroDisponible = true;
-      Serial.printf("Magnetometro responde en 0x0C; WIA=0x%02X (no se usa para rechazar clones).\n", idMag);
-    } else {
-      Serial.printf("Magnetometro sin respuesta/inicializacion en 0x0C; WIA=0x%02X.\n", idMag);
+    Serial.printf("Probando biblioteca DFRobot_BNO055 en 0x%02X... ", direccion);
+    BNO055::eStatus_t estado = candidatos[i]->begin();
+    if (estado != BNO055::eStatusOK) {
+      Serial.printf("inicio fallido (estado %d).\n", static_cast<int>(estado));
+      continue;
     }
+
+    sensorBno055 = candidatos[i];
+    direccionBno055 = direccion;
+    // begin() de DFRobot ya inicia el NDOF; se fija otra vez para dejar claro
+    // que necesitamos orientacion fusionada con acelerometro, gyro y magnetometro.
+    sensorBno055->setOprMode(BNO055::eOprModeNdof);
+    imuDisponible = true;
+    magnetometroDisponible = true; // El magnetometro va integrado en el BNO055.
+    Serial.printf("BNO055 listo en 0x%02X, modo NDOF por biblioteca DFRobot.\n", direccionBno055);
+    actualizarBNO055();
+    imprimirCalibracionBNO055("Calibracion inicial BNO055 (0=sin calibrar, 3=calibrado):");
     return;
   }
-  Serial.println("No se detecto MPU6500/MPU9250/MPU9255 en 0x68 ni 0x69.");
+  Serial.println("No se pudo iniciar la biblioteca DFRobot_BNO055 en 0x28 ni 0x29.");
 }
 
-void actualizarMPU() {
-  if (!mpuDisponible || millis() - ultimaLecturaMpuMs < 10) return;
-  unsigned long ahora = millis();
-  float dt = ultimaLecturaMpuMs == 0 ? 0.01f : (ahora - ultimaLecturaMpuMs) / 1000.0f;
-  ultimaLecturaMpuMs = ahora;
-  uint8_t datos[14] = {0};
-  if (!leerRegistrosI2C(direccionMpu, 0x3B, datos, 14)) return;
-  auto i16 = [](uint8_t hi, uint8_t lo) -> int16_t { return static_cast<int16_t>((static_cast<uint16_t>(hi) << 8) | lo); };
-  aceleracionX = i16(datos[0], datos[1]) / 4096.0f;
-  aceleracionY = i16(datos[2], datos[3]) / 4096.0f;
-  aceleracionZ = i16(datos[4], datos[5]) / 4096.0f;
-  giroX = i16(datos[8], datos[9]) / 65.5f - offsetGiroX;
-  giroY = i16(datos[10], datos[11]) / 65.5f - offsetGiroY;
-  giroZ = i16(datos[12], datos[13]) / 65.5f - offsetGiroZ;
-  float rollAcc = atan2f(aceleracionY, aceleracionZ) * 180.0f / PI;
-  float pitchAcc = atan2f(-aceleracionX, sqrtf(aceleracionY * aceleracionY + aceleracionZ * aceleracionZ)) * 180.0f / PI;
-  if (!orientacionInicializada) { rollImu = rollAcc; pitchImu = pitchAcc; orientacionInicializada = true; }
-  else {
-    rollImu = 0.98f * (rollImu + giroX * dt) + 0.02f * rollAcc;
-    pitchImu = 0.98f * (pitchImu + giroY * dt) + 0.02f * pitchAcc;
-  }
-  if (magnetometroDisponible) {
+void actualizarBNO055() {
+  if (!imuDisponible || sensorBno055 == nullptr || millis() - ultimaLecturaImuMs < 10) return;
+  ultimaLecturaImuMs = millis();
+
+  // DFRobot entrega accel en mg, magnetometro en uT, gyro en dps y Euler en grados.
+  BNO055::sAxisAnalog_t accel = sensorBno055->getAxis(BNO055::eAxisAcc);
+  BNO055::sAxisAnalog_t mag = sensorBno055->getAxis(BNO055::eAxisMag);
+  BNO055::sAxisAnalog_t gyro = sensorBno055->getAxis(BNO055::eAxisGyr);
+  BNO055::sEulAnalog_t euler = sensorBno055->getEul();
+  if (sensorBno055->lastOperateStatus != BNO055::eStatusOK) {
+    lecturaImuValida = false;
     lecturaMagValida = false;
-    // Leer el bloque directamente como en el sketch base funcional. Algunos
-    // clones no implementan ST2 de forma fiable, así que no se descarta por ese byte.
-    uint8_t mag[7] = {0};
-    if (leerRegistrosI2C(0x0C, 0x03, mag, 7)) {
-      magnetometroX = static_cast<int16_t>((static_cast<uint16_t>(mag[1]) << 8) | mag[0]) * 0.15f * factorMagX;
-      magnetometroY = static_cast<int16_t>((static_cast<uint16_t>(mag[3]) << 8) | mag[2]) * 0.15f * factorMagY;
-      magnetometroZ = static_cast<int16_t>((static_cast<uint16_t>(mag[5]) << 8) | mag[4]) * 0.15f * factorMagZ;
-      rumboImu = atan2f(magnetometroY, magnetometroX) * 180.0f / PI;
-      if (rumboImu < 0) rumboImu += 360.0f;
-      lecturaMagValida = true;
-    }
+    if (fallosLecturaImu < 5) ++fallosLecturaImu;
+    if (fallosLecturaMag < 5) ++fallosLecturaMag;
+    return;
+  }
+
+  aceleracionX = accel.x / 1000.0f;
+  aceleracionY = accel.y / 1000.0f;
+  aceleracionZ = accel.z / 1000.0f;
+  magnetometroX = mag.x;
+  magnetometroY = mag.y;
+  magnetometroZ = mag.z;
+  giroX = gyro.x;
+  giroY = gyro.y;
+  giroZ = gyro.z;
+  rumboImu = euler.head;
+  rollImu = euler.roll;
+  pitchImu = euler.pitch;
+  while (rumboImu < 0.0f) rumboImu += 360.0f;
+  while (rumboImu >= 360.0f) rumboImu -= 360.0f;
+
+  lecturaImuValida = isfinite(aceleracionX) && isfinite(aceleracionY) && isfinite(aceleracionZ) &&
+                     isfinite(giroX) && isfinite(giroY) && isfinite(giroZ) && isfinite(rollImu) && isfinite(pitchImu);
+  lecturaMagValida = isfinite(magnetometroX) && isfinite(magnetometroY) && isfinite(magnetometroZ) && isfinite(rumboImu);
+  if (lecturaImuValida) fallosLecturaImu = 0;
+  if (lecturaMagValida) fallosLecturaMag = 0;
+
+  BNO055::sRegCalibState_t calibracion = sensorBno055->getCalStatus();
+  if (sensorBno055->lastOperateStatus == BNO055::eStatusOK) {
+    calibracionSistema = calibracion.SYS;
+    calibracionGiroscopio = calibracion.GYR;
+    calibracionAcelerometro = calibracion.ACC;
+    calibracionMagnetometro = calibracion.MAG;
   }
 }
 
-void calibrarImu() {
-  Serial.println("Deje la IMU quieta y nivelada durante la calibracion del giroscopio...");
-  float sx = 0, sy = 0, sz = 0;
-  uint16_t validas = 0;
-  for (uint16_t i = 0; i < 250; ++i) {
-    uint8_t d[14] = {0};
-    if (leerRegistrosI2C(direccionMpu, 0x3B, d, 14)) {
-      sx += static_cast<int16_t>((static_cast<uint16_t>(d[8]) << 8) | d[9]) / 65.5f;
-      sy += static_cast<int16_t>((static_cast<uint16_t>(d[10]) << 8) | d[11]) / 65.5f;
-      sz += static_cast<int16_t>((static_cast<uint16_t>(d[12]) << 8) | d[13]) / 65.5f;
-      ++validas;
-    }
-    delay(4);
+void imprimirCalibracionBNO055(const char *mensaje) {
+  if (!imuDisponible || sensorBno055 == nullptr) { Serial.println("BNO055 no disponible."); return; }
+  BNO055::sRegCalibState_t calibracion = sensorBno055->getCalStatus();
+  if (sensorBno055->lastOperateStatus != BNO055::eStatusOK) {
+    Serial.println("No se pudo leer el estado de calibracion del BNO055.");
+    return;
   }
-  if (!validas) { Serial.println("No se pudieron leer muestras de IMU."); return; }
-  offsetGiroX = sx / validas; offsetGiroY = sy / validas; offsetGiroZ = sz / validas;
-  Serial.printf("Offsets gyro [deg/s]: X %.2f Y %.2f Z %.2f\n", offsetGiroX, offsetGiroY, offsetGiroZ);
+  calibracionSistema = calibracion.SYS;
+  calibracionGiroscopio = calibracion.GYR;
+  calibracionAcelerometro = calibracion.ACC;
+  calibracionMagnetometro = calibracion.MAG;
+  Serial.printf("%s Sistema=%u, gyro=%u, accel=%u, magnetometro=%u.\n",
+                mensaje, calibracionSistema, calibracionGiroscopio,
+                calibracionAcelerometro, calibracionMagnetometro);
 }
 
 void leerSensores() {
   // Refrescar la IMU al pedir estado; el bucle tambien la actualiza continuamente.
-  actualizarMPU();
+  actualizarBNO055();
   float vAcs = leerVoltajeAdcPromedio(PIN_ACS712);
+  lecturaAcsValida = isfinite(vAcs) && vAcs > 0.05f && vAcs < 3.25f;
   float delta = vAcs - ceroAcsPinV;
   float corrienteCruda = delta * FACTOR_DIVISOR_ACS712 / ACS712_SENSIBILIDAD_V_A;
   float corrienteMuestra = fabsf(corrienteCruda);
@@ -453,28 +466,40 @@ void leerSensores() {
   else corrienteFiltradaA = 0.25f * corrienteMuestra + 0.75f * corrienteFiltradaA;
   float vBatPin = leerVoltajeAdcPromedio(PIN_BATERIA);
   float vBateria = vBatPin * factorDivisorBateria;
+  voltajeBateriaActual = vBateria;
+  lecturaBateriaValida = isfinite(vBatPin) && isfinite(vBateria) && vBatPin > 0.05f && vBateria < 25.0f;
   float potenciaFiltradaW = vBateria * corrienteFiltradaA;
   if (filasTabla > 0 && filasTabla % 20 == 0) imprimirEncabezadoTabla();
-  Serial.printf("%7.3f %7.2f %7.2f %7.2f ", vAcs, corrienteFiltradaA, potenciaFiltradaW, vBateria);
+  Serial.printf("%7.3f %7.2f %7.2f %7.2f %7d ", vAcs, corrienteFiltradaA, potenciaFiltradaW, vBateria, escMicrosegundos);
   if (presionDisponible) {
     presion.read();
-    float profundidad = superficieCalibrada ? (presion.pressure() - presionSuperficieMbar) * 100.0f / (DENSIDAD_AGUA_KG_M3 * GRAVEDAD_M_S2) : 0;
+    float presionMbar = presion.pressure();
+    float temperaturaC = presion.temperature();
+    lecturaPresionValida = isfinite(presionMbar) && isfinite(temperaturaC) && presionMbar > 100.0f && presionMbar < 12000.0f && temperaturaC > -40.0f && temperaturaC < 85.0f;
+    float profundidad = superficieCalibrada ? (presionMbar - presionSuperficieMbar) * 100.0f / (DENSIDAD_AGUA_KG_M3 * GRAVEDAD_M_S2) : 0;
     if (profundidad < 0) profundidad = 0;
-    Serial.printf("%9.2f %7.2f %7.2f ", presion.pressure(), presion.temperature(), profundidad);
-  } else Serial.print("       --      --      -- ");
-  if (mpuDisponible) {
+    Serial.printf("%9.2f %7.2f %7.2f ", presionMbar, temperaturaC, profundidad);
+  } else {
+    lecturaPresionValida = false;
+    Serial.print("       --      --      -- ");
+  }
+  if (imuDisponible && lecturaImuValida) {
     Serial.printf("%6.2f %6.2f %6.2f %7.1f %7.1f %7.1f ", aceleracionX, aceleracionY, aceleracionZ, giroX, giroY, giroZ);
     if (magnetometroDisponible && lecturaMagValida) Serial.printf("%7.1f %7.1f %7.1f ", magnetometroX, magnetometroY, magnetometroZ);
     else Serial.print("     --      --      -- ");
     Serial.printf("%7.1f %7.1f ", rollImu, pitchImu);
     if (magnetometroDisponible && lecturaMagValida) Serial.printf("%7.1f\n", rumboImu);
     else Serial.println("     --");
-  } else Serial.println("    --     --     --      --      --      --      --      --      --      --      --      --");
+  } else Serial.print("    --     --     --      --      --      --      --      --      --      --      --      -- ");
+  if (imuDisponible && lecturaImuValida) {
+    Serial.printf("%4u %4u %4u %4u\n", calibracionSistema, calibracionGiroscopio,
+                  calibracionAcelerometro, calibracionMagnetometro);
+  } else Serial.println("  --   --   --   --");
   ++filasTabla;
 }
 
 void imprimirEncabezadoTabla() {
-  Serial.println("\n ACS[V]   I[A]    P[W]  Bat[V] Press[mbar] Temp[C] Depth[m]   Ax[g]   Ay[g]   Az[g] Gx[dps] Gy[dps] Gz[dps] Mx[uT] My[uT] Mz[uT] Roll[deg] Pitch[deg] Yaw[deg]");
+  Serial.println("\n ACS[V]   I[A]    P[W]  Bat[V] ESC[us] Press[mbar] Temp[C] Depth[m]   Ax[g]   Ay[g]   Az[g] Gx[dps] Gy[dps] Gz[dps] Mx[uT] My[uT] Mz[uT] Roll[deg] Pitch[deg] Yaw[deg] CalSys CalG CalA CalM");
   filasTabla = 0;
 }
 
@@ -492,21 +517,83 @@ void actualizarCeroCorrienteAutomatico() {
   }
 }
 
+bool hayFallaSensores() {
+  return !escPwmDisponible ||
+         !presionDisponible || !lecturaPresionValida ||
+         !imuDisponible || !lecturaImuValida || fallosLecturaImu >= 5 ||
+         !magnetometroDisponible || !lecturaMagValida || fallosLecturaMag >= 5 ||
+         !lecturaAcsValida || !lecturaBateriaValida;
+}
+
 void actualizarLeds() {
   unsigned long ahora = millis();
-  if (modoLed == LED_ERROR && ahora - ultimoLedMs >= 400) { ultimoLedMs = ahora; estadoParpadeo = !estadoParpadeo; if (estadoParpadeo) colorTodos(255, 0, 0); else { pixels.clear(); pixels.show(); } }
-  else if (modoLed == LED_CONFIG && ahora - ultimoLedMs >= 80) { ultimoLedMs = ahora; pixels.clear(); pixels.setPixelColor(pixelConfiguracion++ % NUM_PIXELS, pixels.Color(255, 120, 0)); pixels.show(); }
-  else if (modoLed == LED_OPERANDO && ahora - ultimoLedMs >= 20) { ultimoLedMs = ahora; pixels.setBrightness(brilloOperacion); colorTodos(0, 0, 255); brilloOperacion += pasoBrillo; if (brilloOperacion >= 40 || brilloOperacion <= 5) pasoBrillo = -pasoBrillo; }
+  ModoLed modoDeseado;
+
+  // En pausa se muestra LISTO aunque haya sensores ausentes; bateria baja conserva su aviso.
+  if (ahora - inicioSistemaMs < TIEMPO_CONFIGURACION_LED_MS) modoDeseado = LED_CONFIG;
+  else if (!sistemaOperando && voltajeBateriaActual < VOLTAJE_BATERIA_BAJO_V) modoDeseado = LED_BATERIA;
+  else if (!sistemaOperando) modoDeseado = LED_LISTO;
+  else if (hayFallaSensores()) modoDeseado = LED_ERROR;
+  else if (voltajeBateriaActual < VOLTAJE_BATERIA_BAJO_V) modoDeseado = LED_BATERIA;
+  else modoDeseado = LED_OPERANDO;
+
+  if (modoDeseado != modoLed) {
+    modoLed = modoDeseado;
+    ultimoLedMs = ahora;
+    estadoParpadeo = true;
+    pixelConfiguracion = 0;
+    pixels.setBrightness(40);
+
+    if (modoLed == LED_CONFIG) {
+      pixels.clear();
+      pixels.setPixelColor(pixelConfiguracion++, pixels.Color(255, 120, 0));
+      pixels.show();
+    } else if (modoLed == LED_ERROR) {
+      colorTodos(255, 0, 0);
+    } else if (modoLed == LED_LISTO) {
+      colorTodos(0, 120, 255);
+    } else if (modoLed == LED_OPERANDO) {
+      brilloOperacion = 5;
+      pasoBrillo = 1;
+      pixels.setBrightness(brilloOperacion);
+      colorTodos(0, 0, 255);
+    } else if (modoLed == LED_BATERIA) {
+      colorTodos(255, 80, 0);
+    } else {
+      pixels.clear();
+      pixels.show();
+    }
+  }
+
+  if (modoLed == LED_ERROR && ahora - ultimoLedMs >= 400) {
+    ultimoLedMs = ahora;
+    estadoParpadeo = !estadoParpadeo;
+    if (estadoParpadeo) colorTodos(255, 0, 0);
+    else { pixels.clear(); pixels.show(); }
+  } else if (modoLed == LED_CONFIG && ahora - ultimoLedMs >= 80) {
+    ultimoLedMs = ahora;
+    pixels.clear();
+    pixels.setPixelColor(pixelConfiguracion++ % NUM_PIXELS, pixels.Color(255, 120, 0));
+    pixels.show();
+  } else if (modoLed == LED_OPERANDO && ahora - ultimoLedMs >= 20) {
+    ultimoLedMs = ahora;
+    if (brilloOperacion >= 40) pasoBrillo = -1;
+    else if (brilloOperacion <= 5) pasoBrillo = 1;
+    brilloOperacion += pasoBrillo;
+    pixels.setBrightness(brilloOperacion);
+    colorTodos(0, 0, 255);
+  }
 }
 
 void colorTodos(uint8_t r, uint8_t g, uint8_t b) { for (uint16_t i = 0; i < NUM_PIXELS; ++i) pixels.setPixelColor(i, pixels.Color(r, g, b)); pixels.show(); }
 
 void imprimirAyuda() {
-  Serial.println("Comandos: ayuda | estado | stop");
+  Serial.println("Comandos: ayuda | estado | stop | reiniciar");
   Serial.println("Agua: adelante/a, derecha/d, izquierda/i, roll_derecha/rd, roll_izquierda/ri, agua_off");
   Serial.println("Aire: aire_on, aire_off, aire1_on/off, aire2_on/off | valvula_on/off");
   Serial.println("Pinza: abrir, cerrar, servo 0..180 | Propulsor: esc 1000..2000, esc_off");
   Serial.println("Calibracion automatica: ACS712 al arrancar/en neutro; bateria guardada en memoria.");
-  Serial.println("Calibracion opcional: calibrar_bateria <V multimetro>, calibrar_superficie, calibrar_imu");
-  Serial.println("LED: error, config, listo, operando, bateria, led_off");
+  Serial.println("Calibracion: calibrar_bateria <V multimetro>, calibrar_superficie, calibrar_imu, calibrar_brujula");
+  Serial.println("BNO055: calibracion automatica; gire el submarino en forma de ocho para mejorar el magnetometro/rumbo.");
+  Serial.println("Control: iniciar | stop (Start alterna OPERANDO/LISTO desde el mando). Aro LED automatico.");
 }

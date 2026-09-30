@@ -1,25 +1,21 @@
-# Evidencia histórica y archivos de fabricación
+# Evidencia del proyecto
 
-## Primera versión construida
+## Primera version construida
 
-Las fotos de [`primera_version_submarino`](primera_version_submarino/) provienen de `Proyecto/Imagenes` y documentan el primer submarino que se construyó. Son un registro histórico de esa versión; no representan el diseño actual.
+Las fotos de primera_version_submarino documentan la primera unidad construida y no representan por si solas la configuracion de version 2.
 
-## Diseño de la versión 2
+## Version 2 y PCB
 
-Las imágenes en [`version_2_submarino`](version_2_submarino/) son renders del diseño de la segunda versión, provenientes de `Proyecto/imagenes v2`. Se presentan como visualizaciones del diseño, no como fotografías de una unidad construida.
+- version_2_submarino contiene renders del diseno de la segunda version.
+- pcb contiene DATOS.jpeg y Montaje.jpeg de la PCB.
 
-## Pruebas de PCB
+## Pruebas de operacion (30-09-2026)
 
-En [`pcb`](pcb/) se incluyen `DATOS.jpeg` y `Montaje.jpeg`, copiados desde `Proyecto/pruebas PCB`. El video original está en la carpeta fuente; los archivos `.mp4` se excluyen del control de versiones por la regla del repositorio.
+- [Prueba de funcionamiento del aro LED](operacion/aro_led_operativo_2026-09-30.mp4).
+- [Telemetria en tiempo real](operacion/telemetria_tiempo_real_2026-09-30.mp4).
 
-## Pruebas FEA e imágenes
+## FEA y archivos tecnicos
 
-Las pruebas FEA y sus imágenes están en el documento compartido por el usuario: [Abrir documento de pruebas FEA e imágenes en OneDrive](https://1drv.ms/w/c/5849b21efb36e423/IQC6wTvbUKNUTo-QrPtmvVhxAYxSXWxDTwB7AuLJp3VFQAA?e=XMopzp).
+Las pruebas FEA e imagenes se conservan en el documento compartido por el usuario: [Abrir documento FEA](https://1drv.ms/w/c/5849b21efb36e423/IQC6wTvbUKNUTo-QrPtmvVhxAYxSXWxDTwB7AuLJp3VFQAA?e=XMopzp).
 
-## Archivos técnicos complementarios
-
-- [`../../hardware/pcb`](../../hardware/pcb/): BOM y paquete Gerber de la PCB.
-- [`../../hardware/Pieza_frontal.stl`](../../hardware/Pieza_frontal.stl) y [`../../hardware/Pieza_trasera.stl`](../../hardware/Pieza_trasera.stl): piezas para impresión 3D.
-- Los modelos CAD de Inventor y el modelo Blender permanecen en la carpeta fuente `Proyecto`.
-
-Las recomendaciones de normas APA del tutor no se incorporan a este repositorio.
+Los modelos STL de fabricacion estan en ../../hardware. Los modelos CAD editables, Blender y simulaciones permanecen en las carpetas de trabajo del proyecto.

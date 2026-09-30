@@ -1,4 +1,3 @@
-﻿timestamp,voltage_v,current_a,pressure_mbar,temperature_c
-2026-09-16T14:00:00,12.40,0.18,1013.25,24.10
-2026-09-16T14:00:02,12.36,0.42,1014.02,24.10
-2026-09-16T14:00:04,12.31,0.57,1015.18,24.20
+fecha_hora_local,tiempo_s,modo,acs712_adc_v,corriente_motor_a,potencia_motor_w,bateria_v,esc_us,presion_mbar,temperatura_c,profundidad_m,aceleracion_x_g,aceleracion_y_g,aceleracion_z_g,giroscopio_x_dps,giroscopio_y_dps,giroscopio_z_dps,magnetometro_x_ut,magnetometro_y_ut,magnetometro_z_ut,roll_deg,pitch_deg,yaw_deg,bno055_calibracion_sistema_0_3,bno055_calibracion_giroscopio_0_3,bno055_calibracion_acelerometro_0_3,bno055_calibracion_magnetometro_0_3
+2026-09-30T12:00:00.000-05:00,0.000,LISTO,1.235,0.00,0.00,11.39,1500,760.80,24.50,0.00,-0.10,0.00,1.03,-1.50,0.10,3.00,22.0,-7.4,39.1,-0.5,6.7,180.0,3,3,3,3
+2026-09-30T12:00:00.100-05:00,0.100,OPERANDO,1.250,0.15,1.71,11.35,1600,760.85,24.50,0.01,-0.10,0.00,1.03,-1.40,0.20,3.10,22.3,-7.2,39.0,-0.4,6.4,180.2,3,3,3,3

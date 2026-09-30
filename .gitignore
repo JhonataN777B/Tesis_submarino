@@ -1,16 +1,18 @@
-﻿# Python
+# Python
 __pycache__/
 *.py[cod]
 .venv/
 
-# Datos y grabaciones pesadas
+# Runtime logs and local camera recordings
 data/raw/
+interface/Logs_Submarino/
 interface/Grabaciones_HUD/
 *.mp4
 *.avi
 *.mov
+!docs/evidencia/operacion/*.mp4
 
-# Archivos temporales
+# Temporary files
 *.tmp
 Thumbs.db
 .DS_Store
