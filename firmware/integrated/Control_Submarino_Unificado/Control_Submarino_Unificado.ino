@@ -454,6 +454,7 @@ void imprimirCalibracionBNO055(const char *mensaje) {
 }
 
 void leerSensores() {
+  unsigned long tiempoMuestreoMs = millis();
   // Refrescar la IMU al pedir estado; el bucle tambien la actualiza continuamente.
   actualizarBNO055();
   float vAcs = leerVoltajeAdcPromedio(PIN_ACS712);
@@ -470,6 +471,7 @@ void leerSensores() {
   lecturaBateriaValida = isfinite(vBatPin) && isfinite(vBateria) && vBatPin > 0.05f && vBateria < 25.0f;
   float potenciaFiltradaW = vBateria * corrienteFiltradaA;
   if (filasTabla > 0 && filasTabla % 20 == 0) imprimirEncabezadoTabla();
+  Serial.printf("%lu ", tiempoMuestreoMs);
   Serial.printf("%7.3f %7.2f %7.2f %7.2f %7d ", vAcs, corrienteFiltradaA, potenciaFiltradaW, vBateria, escMicrosegundos);
   if (presionDisponible) {
     presion.read();
@@ -499,7 +501,7 @@ void leerSensores() {
 }
 
 void imprimirEncabezadoTabla() {
-  Serial.println("\n ACS[V]   I[A]    P[W]  Bat[V] ESC[us] Press[mbar] Temp[C] Depth[m]   Ax[g]   Ay[g]   Az[g] Gx[dps] Gy[dps] Gz[dps] Mx[uT] My[uT] Mz[uT] Roll[deg] Pitch[deg] Yaw[deg] CalSys CalG CalA CalM");
+  Serial.println("\n T_muestra[ms] ACS[V]   I[A]    P[W]  Bat[V] ESC[us] Press[mbar] Temp[C] Depth[m]   Ax[g]   Ay[g]   Az[g] Gx[dps] Gy[dps] Gz[dps] Mx[uT] My[uT] Mz[uT] Roll[deg] Pitch[deg] Yaw[deg] CalSys CalG CalA CalM");
   filasTabla = 0;
 }
 

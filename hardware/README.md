@@ -13,4 +13,8 @@
 - soporte_motor.stl: soporte del motor.
 - soporte_1.stl, soporte_2.stl y soporte_3.stl: soportes complementarios.
 
-Estos son exportes STL para fabricacion. Los archivos CAD editables, el proyecto de Inventor/Blender y simulaciones se conservan en las carpetas de trabajo originales.
+Estos son exportes STL para fabricacion.
+
+## Modelo CAD editable
+
+- inventor/Helice toroidal.ipt: modelo editable de la helice toroidal en Autodesk Inventor.
