@@ -9,7 +9,7 @@ Repository for the low-cost remotely operated vehicle (ROV): ESP32-S3 firmware, 
 - interface/solo_control.py: current joystick, serial, camera HUD, telemetry, logging, and recording application.
 - interface/prueba_control_mando.py: independent PG-9076/Pygame axis and button diagnostic.
 - hardware: PCB files and STL models used for the printed assembly.
-- data: a lightweight, illustrative telemetry sample. Runtime logs are not committed.
+- data: an illustrative telemetry sample and archived experimental logs grouped by propeller and pilot run.
 - docs/evidencia: PCB, design, and selected operational evidence videos.
 
 ## Current integration
